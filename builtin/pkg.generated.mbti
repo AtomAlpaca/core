@@ -88,9 +88,8 @@ fn[T] Array::filter(Self[T], (T) -> Bool raise?) -> Self[T] raise?
 #deprecated
 fn[T] Array::find_index(Self[T], (T) -> Bool) -> Int?
 fn[T] Array::flatten(Self[Self[T]]) -> Self[T]
+#alias(fold_left, deprecated)
 fn[A, B] Array::fold(Self[A], init~ : B, (B, A) -> B raise?) -> B raise?
-#deprecated
-fn[T, U] Array::fold_left(Self[T], (U, T) -> U raise?, init~ : U) -> U raise?
 #deprecated
 fn[T, U] Array::fold_lefti(Self[T], (Int, U, T) -> U raise?, init~ : U) -> U raise?
 #deprecated
@@ -566,7 +565,7 @@ fn[T] FixedArray::unsafe_set(Self[T], Int, T) -> Unit
 fn Bytes::copy(Bytes) -> Bytes
 fn Bytes::length(Bytes) -> Int
 fn Bytes::make(Int, Byte) -> Bytes
-fn[] Bytes::makei(Int, (Int) -> Byte raise?) -> Bytes raise?
+fn Bytes::makei(Int, (Int) -> Byte raise?) -> Bytes raise?
 fn Bytes::new(Int) -> Bytes
 #deprecated
 fn Bytes::of_string(String) -> Bytes
