@@ -68,6 +68,10 @@ let decimal_ratio = 0.302 // log10(2)
 /// When to switch to Karatsuba multiplication
 let karatsuba_threshold = 50
 
+///|
+/// When to switch to Burnikel-Ziegler method
+let burnikel_threshold = 50
+
 // Useful bigints
 
 ///|
@@ -414,6 +418,48 @@ fn BigInt::split(self : BigInt, half : Int) -> (BigInt, BigInt) {
 }
 
 ///|
+/// Extracts a contiguous subsequence of limbs from a `BigInt`, creating a new
+/// `BigInt` with the specified range.
+///
+/// Parameters:
+///
+/// * `self` : The `BigInt` from which to extract the slice.
+/// * `start` : The starting position (index) of the slice in the limb array.
+/// * `len` : The number of limbs to include in the slice.
+fn slice(self : BigInt, start : Int, len : Int) -> BigInt {
+  if start >= self.len {
+    return zero
+  }
+  if start + len > self.len {
+    return BigInt::split(self, start).1
+  }
+  let final_len = for i = len - 1; i >= 0; i = i - 1 {
+    if self.limbs[start + i] != 0 {
+      break i + 1
+    }
+  } else {
+    1
+  }
+  let res = FixedArray::make(final_len, 0U)
+  res.unsafe_blit(0, self.limbs, start, final_len)
+  return { limbs: res, sign: Positive, len: final_len }
+}
+
+///|
+/// Splice two Bigints' digiests together directly.
+/// Formally, return |upper| * radix * len + |lower|.
+/// Assumption: len > lower.len
+fn BigInt::splice(upper : BigInt, lower : BigInt, len : Int) -> BigInt {
+  if upper == 0 {
+    return lower
+  }
+  let res = FixedArray::make(len + upper.len, 0U)
+  res.unsafe_blit(0, lower.limbs, 0, lower.len)
+  res.unsafe_blit(len, upper.limbs, 0, upper.len)
+  return { limbs: res, sign: Positive, len: len + upper.len }
+}
+
+///|
 /// Performs division between two arbitrary-precision integers, following
 /// standard arithmetic rules for signed division.
 ///
@@ -444,14 +490,19 @@ pub impl Div for BigInt with div(self : BigInt, other : BigInt) -> BigInt {
   // Handle negative numbers
   if self.sign == Negative {
     if other.sign == Negative {
-      BigInt::grade_school_div(-self, -other).0
+      BigInt::div(-self, -other)
     } else {
-      -BigInt::grade_school_div(-self, other).0
+      -BigInt::div(-self, other)
     }
   } else if other.sign == Negative {
-    -BigInt::grade_school_div(self, -other).0
+    -BigInt::div(self, -other)
   } else {
-    return BigInt::grade_school_div(self, other).0
+    if other.len < burnikel_threshold {
+      return BigInt::grade_school_div(self, other).0
+    }
+    else {
+      return BigInt::burnikel_ziegler_div(self, other).0
+    }
   }
 }
 
@@ -499,7 +550,7 @@ pub impl Mod for BigInt with mod(self : BigInt, other : BigInt) -> BigInt {
 // Assumption: other != zero.
 
 ///|
-fn BigInt::grade_school_div(self : BigInt, other : BigInt) -> (BigInt, BigInt) {
+pub fn BigInt::grade_school_div(self : BigInt, other : BigInt) -> (BigInt, BigInt) {
   // Handle edge cases
   if self < other {
     return (zero, self)
@@ -631,6 +682,118 @@ fn BigInt::grade_school_div(self : BigInt, other : BigInt) -> (BigInt, BigInt) {
   }
   let modulo = { limbs: modulo, sign: Positive, len: i }
   ({ limbs: q, sign: Positive, len }, modulo >> lshift)
+}
+///|
+/// Performs division of two arbitrary-precision integers using the
+/// Burnikel-Ziegler algorithm for improved efficiency on large numbers.
+///
+/// Parameters:
+///
+/// * `self` : The dividend (the number to be divided).
+/// * `other` : The divisor (the number to divide by).
+///
+/// Returns a tuple containing the quotient and remainder of the division
+/// operation.
+///
+fn BigInt::burnikel_ziegler_div(
+  self : BigInt,
+  other : BigInt,
+) -> (BigInt, BigInt) {
+  let mut r = self.len
+  let mut s = other.len
+
+  if s < burnikel_threshold {
+    return BigInt::grade_school_div(self, other)
+  }
+
+  // m = min {2^k | 2^k * threshold > s}
+  let mut tmp = s / burnikel_threshold
+  let mut m = 1
+  while tmp != 0 {
+    tmp = tmp >> 1
+    m = m << 1
+  }
+
+  // j = ceil(s / m)
+  // n = j * m 
+  let j = (s + m - 1) / m
+  let n = j * m
+
+  // sigma = max{t | 2^t * B < 2^(radix_bit_len * n)}
+  let sigma = for i = radix_bit_len - 1; i >= 0; i = i - 1 {
+    if (other.limbs[s - 1].to_int64() & (1 << i).to_int64()) != 0 {
+      break radix_bit_len - 1 - i
+    }
+  } else {
+    0
+  }
+
+  // A = A << sigma
+  // B = B << sigma
+  let a = self << sigma
+  let b = other << sigma
+  r = a.len
+  s = b.len
+
+  // t = min{t >= 2 | A < 2^(radix_bit_len * t * n - 1)}
+  let t = max(2, (r + n - 1) / n)
+  let mut final_q = BigInt::from_int(0)
+  let mut ri = a.slice(n * (t - 1), n)
+  for i = t - 2; i >= 0; i = i - 1 {
+    let z = BigInt::splice(ri, a.slice(n * i, n), n)
+    let res = BigInt::d2n1n(z, b)
+    ri = res.1
+    final_q = BigInt::splice(final_q, res.0, n)
+  }
+  return (final_q, ri >> sigma)
+}
+
+///|
+/// Helper function for Burnikel-Ziegler Division
+/// Create a BigInt with `len` digests and each digest
+/// equls to radix - 1
+fn BigInt::all_ones(len : Int) -> BigInt {
+  let res = FixedArray::make(len, (radix - 1).to_uint())
+  return { limbs: res, sign: Positive, len }
+}
+
+///|
+/// The helper function for Burnikel-Ziegler Division
+/// Assumption: A < B * 2^(radix_len_bit * n)
+fn BigInt::d2n1n(a : BigInt, b : BigInt) -> (BigInt, BigInt) {
+  let n = b.len
+  if n % 2 != 0 || n < burnikel_threshold {
+    return BigInt::grade_school_div(a, b)
+  }
+  let a1a2 = a.slice(n, n)
+  let a3 = a.slice(n / 2, n / 2)
+  let a4 = a.slice(0, n / 2)
+  let (q1, r1) = BigInt::d3n2n(a1a2, a3, b)
+  let (q2, r2) = BigInt::d3n2n(r1, a4, b)
+  return (BigInt::splice(q1, q2, n), r2)
+}
+
+///|
+/// The helper function for Burnikel-Ziegler Division
+/// Assumption: A < B * 2^(radix_len_bit) * n)
+fn BigInt::d3n2n(a1a2 : BigInt, a3 : BigInt, b : BigInt) -> (BigInt, BigInt) {
+  let n = b.len / 2
+  let a1 = a1a2.slice(n, n)
+  let b1 = b.slice(n, n)
+  let b2 = b.slice(0, n)
+  let (qhat, r1) = if a1 < b1 {
+    BigInt::d2n1n(a1a2, b1)
+  } else {
+    (BigInt::all_ones(n), a1a2 - (b1 << (n * radix_bit_len)) + b1)
+  }
+  let d = qhat * b2
+  let mut rhat = BigInt::splice(r1, a3, n) - d
+  let mut q = qhat
+  while rhat < 0 {
+    rhat = rhat + b
+    q = q - 1
+  }
+  return (q, rhat)
 }
 
 // Bitwise Operations
