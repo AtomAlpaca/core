@@ -13,6 +13,25 @@
 // limitations under the License.
 
 ///|
-pub impl Eq for Unit with equal(_ : Unit, _ : Unit) -> Bool {
-  true
+#deprecated("Use `Ok(value)` instead")
+pub fn[T, E] ok(value : T) -> Result[T, E] {
+  Ok(value)
+}
+
+///|
+#deprecated("Use `Err(value)` instead")
+pub fn[T, E] err(value : E) -> Result[T, E] {
+  Err(value)
+}
+
+///|
+#deprecated("use `x is Ok(_)` instead")
+pub fn[T, E] is_ok(self : Result[T, E]) -> Bool {
+  self is Ok(_)
+}
+
+///|
+#deprecated("use `x is Err(_)` instead")
+pub fn[T, E] is_err(self : Result[T, E]) -> Bool {
+  self is Err(_)
 }

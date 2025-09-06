@@ -13,6 +13,20 @@
 // limitations under the License.
 
 ///|
-pub impl Eq for Unit with equal(_ : Unit, _ : Unit) -> Bool {
-  true
+test "encode" {
+  let s = "abc你好👀"
+  let encoded = @utf8.encode(s)
+  inspect(
+    encoded,
+    content=(
+      #|b"\x61\x62\x63\xe4\xbd\xa0\xe5\xa5\xbd\xf0\x9f\x91\x80"
+    ),
+  )
+  let encoded_with_bom = @utf8.encode(s, bom=true)
+  inspect(
+    encoded_with_bom,
+    content=(
+      #|b"\xef\xbb\xbf\x61\x62\x63\xe4\xbd\xa0\xe5\xa5\xbd\xf0\x9f\x91\x80"
+    ),
+  )
 }
